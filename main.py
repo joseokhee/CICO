@@ -26,7 +26,6 @@ from models import get_model
 def main(args):
     utils.init_distributed_mode(args)
 
-    print(args)
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -41,7 +40,7 @@ def main(args):
     output_dir = Path(args.output_dir)
     if utils.is_main_process():
         output_dir.mkdir(parents=True, exist_ok=True)
-        with (output_dir / "log.txt").open("a") as f:
+        with (output_dir / "log_wo_cico.txt").open("a") as f:
             f.write(" ".join(sys.argv) + "\n")
 
     ##############################################
@@ -109,8 +108,7 @@ def main(args):
     elif args.smoothing:
         criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
     else:
-        criterion = torch.nn.CrossEntropyLoss()
-
+        criterion=torch.nn.BCELoss()
     ##############################################
     # Resume training from ckpt (model, optimizer, lr_scheduler, epoch, model_ema, scaler)
     if args.resume:
@@ -139,12 +137,12 @@ def main(args):
     print(f"Accuracy of the network on dataset_val: {test_stats['acc1']:.1f}%")
     if args.output_dir and utils.is_main_process():
         test_stats['epoch'] = -1
-        with (output_dir / "log.txt").open("a") as f:
+        with (output_dir / "log_wo_cico.txt").open("a") as f:
             f.write(json.dumps(test_stats) + "\n")
 
     if args.eval:
         return
-
+    
     ##############################################
     # Training
     if utils.is_main_process():
@@ -174,7 +172,7 @@ def main(args):
                      'n_parameters': n_parameters}
 
         if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint.pth', output_dir / 'best.pth']
+            checkpoint_paths = [output_dir / 'wo_cico_checkpoint.pth', output_dir / 'wo_cico_best.pth']
             for checkpoint_path in checkpoint_paths:
                 state_dict = {
                     'model': model_without_ddp.state_dict(),
@@ -197,7 +195,7 @@ def main(args):
 
         if args.output_dir and utils.is_main_process():
             log_stats['best_test_acc'] = max_accuracy
-            with (output_dir / "log.txt").open("a") as f:
+            with (output_dir / "log_wo_cico.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
     total_time = time.time() - start_time

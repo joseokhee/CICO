@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+torch.set_printoptions(profile="full")
 
 class ProtoNet(nn.Module):
     def __init__(self, backbone):
         super().__init__()
+        self.sig=nn.Sigmoid()
 
         # bias & scale of cosine classifier
         self.bias = nn.Parameter(torch.FloatTensor(1).fill_(0), requires_grad=True)
@@ -14,16 +15,26 @@ class ProtoNet(nn.Module):
         # backbone
         self.backbone = backbone
 
+    def get_last_selfattention(self,x):
+        
+        return self.backbone.get_last_selfattention(x)
+    
+
     def cos_classifier(self, w, f):
         """
         w.shape = B, nC, d
         f.shape = B, M, d
         """
+        #with open('embed_cont_pseudo.txt',"a") as file:
+        #    file.write(str(f.tolist())+"\n")
+        
         f = F.normalize(f, p=2, dim=f.dim()-1, eps=1e-12)
         w = F.normalize(w, p=2, dim=w.dim()-1, eps=1e-12)
 
         cls_scores = f @ w.transpose(1, 2) # B, M, nC
+        #cls_scores = self.sig(self.scale_cls * (cls_scores + self.bias))
         cls_scores = self.scale_cls * (cls_scores + self.bias)
+        
         return cls_scores
 
     def forward(self, supp_x, supp_y, x):

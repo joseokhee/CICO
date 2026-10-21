@@ -2,15 +2,60 @@ import math
 import sys
 import warnings
 from typing import Iterable, Optional
-
+import torch.nn as nn
+import torch.nn.functional as F
 import torch
+import numpy as np
 from torch.utils.tensorboard import SummaryWriter
-
+from torchvision.utils import save_image
 from timm.data import Mixup
 from timm.utils import accuracy, ModelEma
 
 import utils.deit_util as utils
 from utils import AverageMeter, to_device
+
+def attention_image(img,model):
+
+    w_featmap = img.shape[-2] // 16
+    h_featmap = img.shape[-1] // 16
+
+    attentions = model.module.get_last_selfattention(img[0])
+
+    bs=attentions.shape[0]
+    nh = attentions.shape[1] # number of head
+    attentions = attentions[:, :, 0, 1:].reshape(bs,nh, -1)
+
+
+    val, idx = torch.sort(attentions)
+
+    val /= torch.sum(val, dim=1, keepdim=True)
+    cumval = torch.cumsum(val, dim=1)
+
+    _,top_idx=torch.topk(cumval,k=10,dim=-1)
+
+    th_attn = cumval > 0
+    th_attn=th_attn[:,1]
+    for i in range(bs):
+        th_attn[i][top_idx[i].clone().detach()]=False
+
+    idx2 = torch.argsort(idx)[:,1]
+    
+    for i in range(bs):
+        th_attn[i] = th_attn[i][idx2[i]]
+
+    th_attn = th_attn.reshape(bs, w_featmap, h_featmap).float()
+    
+    # interpolate
+    th_attn = nn.functional.interpolate(th_attn.unsqueeze(0), scale_factor=16, mode="nearest")[0]
+    
+    th_attn=th_attn.unsqueeze(1)
+
+    
+    for i in range(bs):
+        img[0][i]=img[0][i]*torch.cat((th_attn[i],th_attn[i],th_attn[i]),dim=0)
+    
+    return img
+
 
 
 def train_one_epoch(data_loader: Iterable,
@@ -39,19 +84,29 @@ def train_one_epoch(data_loader: Iterable,
     model.train(set_training_mode)
 
     for batch in metric_logger.log_every(data_loader, print_freq, header):
+        
         batch = to_device(batch, device)
         SupportTensor, SupportLabel, x, y = batch
-
+        SupportTensor,x=attention_image(SupportTensor,model),attention_image(x,model)
+        
         if mixup_fn is not None:
             x, y = mixup_fn(x, y)
 
+        
         # forward
         with torch.cuda.amp.autocast(fp16):
             output = model(SupportTensor, SupportLabel, x)
+        
+        
+        num_classes=y.max()+1
+        output = output.view(x.shape[0] * x.shape[1], -1).to(torch.float32)
+        y_1hot = F.one_hot(y, num_classes).squeeze().to(torch.float32) # B, nC, nSupp
+        
+        loss = criterion(output, y_1hot)
+        _,pred=torch.max(output,1)
+        acc1=torch.sum(pred==y)/y.shape[1]*100
 
-        output = output.view(x.shape[0] * x.shape[1], -1)
-        y = y.view(-1)
-        loss = criterion(output, y)
+        batch_size = x.shape[0]
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -75,6 +130,7 @@ def train_one_epoch(data_loader: Iterable,
 
         lr = optimizer.param_groups[0]["lr"]
         metric_logger.update(loss=loss_value)
+        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
         metric_logger.update(lr=lr)
         metric_logger.update(n_ways=SupportLabel.max()+1)
         metric_logger.update(n_imgs=SupportTensor.shape[1] + x.shape[1])
@@ -118,11 +174,13 @@ def evaluate(data_loaders, model, criterion, device, seed=None, ep=None):
 
 @torch.no_grad()
 def _evaluate(data_loader, model, criterion, device, seed=None, ep=None):
+    mean = torch.tensor([x/255.0 for x in [120.39586422,  115.59361427, 104.54012653]])
+    std = torch.tensor([x/255.0 for x in [70.68188272,  68.27635443,  72.54505529]]) 
+    
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('n_ways', utils.SmoothedValue(window_size=1, fmt='{value:d}'))
     metric_logger.add_meter('n_imgs', utils.SmoothedValue(window_size=1, fmt='{value:d}'))
     metric_logger.add_meter('acc1', utils.SmoothedValue(window_size=len(data_loader.dataset)))
-    metric_logger.add_meter('acc5', utils.SmoothedValue(window_size=len(data_loader.dataset)))
     header = 'Test:'
 
     # switch to evaluation mode
@@ -137,28 +195,38 @@ def _evaluate(data_loader, model, criterion, device, seed=None, ep=None):
                 break
 
         batch = to_device(batch, device)
-        SupportTensor, SupportLabel, x, y = batch
+        SupportTensor, SupportLabel, x, y= batch
 
+        
         # compute output
         with torch.cuda.amp.autocast():
             output = model(SupportTensor, SupportLabel, x)
 
-        output = output.view(x.shape[0] * x.shape[1], -1)
-        y = y.view(-1)
-        loss = criterion(output, y)
-        acc1, acc5 = accuracy(output, y, topk=(1, 5))
+        num_classes=y.max()+1
+        output = output.view(x.shape[0] * x.shape[1], -1).to(torch.float32)
+        
 
+        y_1hot = F.one_hot(y, num_classes).squeeze().to(torch.float32) # B, nC, nSupp
+        
+        
+        loss = criterion(output, y_1hot)
+        
+        _,pred=torch.max(output,1)
+    
+        
+        acc1=torch.sum(pred==y)/y.shape[1]*100
+
+        
         batch_size = x.shape[0]
         metric_logger.update(loss=loss.item())
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
         metric_logger.update(n_ways=SupportLabel.max()+1)
         metric_logger.update(n_imgs=SupportTensor.shape[1] + x.shape[1])
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
-          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+    print('* Acc@1 {top1.global_avg:.3f} loss {losses.global_avg:.3f}'
+          .format(top1=metric_logger.acc1,  losses=metric_logger.loss))
 
     ret_dict = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     ret_dict['acc_std'] = metric_logger.meters['acc1'].std

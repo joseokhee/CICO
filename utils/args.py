@@ -22,7 +22,7 @@ def get_args_parser():
                         help='dataset path')
     parser.add_argument('--pretrained-checkpoint-path', default='.', type=str,
                         help='path which contains the directories pretrained_ckpts and pretrained_ckpts_converted')
-    parser.add_argument("--dataset", choices=["cifar_fs_elite", "cifar_fs", "mini_imagenet", "meta_dataset"],
+    parser.add_argument("--dataset", choices=["cifar_fs_elite", "cifar_fs", "mini_imagenet","tiered_imagenet", "meta_dataset"],
                         default="cifar_fs",
                         help="Which few-shot dataset.")
 
@@ -123,7 +123,7 @@ def get_args_parser():
     parser.set_defaults(model_ema=False)
     parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
     parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
-
+    parser.add_argument('--alpha',type=float,default=0.1,)
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
                         help='Optimizer (default: "adamw"')

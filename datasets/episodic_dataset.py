@@ -65,6 +65,8 @@ class EpisodeDataset(data.Dataset):
         """
         # select nCls from clsList
         clsEpisode = np.random.choice(self.clsList, self.nCls, replace=False)
+
+
         for i, cls in enumerate(clsEpisode) :
             clsPath = os.path.join(self.imgDir, cls)
             imgList = os.listdir(clsPath)
@@ -88,10 +90,12 @@ class EpisodeDataset(data.Dataset):
         permSupport = torch.randperm(self.nCls * self.nSupport)
         permQuery = torch.randperm(self.nCls * self.nQuery)
 
+
         return (self.tensorSupport[permSupport],
                self.labelSupport[permSupport],
                self.tensorQuery[permQuery],
-               self.labelQuery[permQuery])
+               self.labelQuery[permQuery],
+               )
 
 
 class EpisodeJSONDataset(data.Dataset):

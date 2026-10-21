@@ -46,7 +46,7 @@ def main(args):
     utils.init_distributed_mode(args)
 
     args.eval = True
-    args.dataset = 'meta_dataset'
+    #args.dataset = 'meta_dataset'
 
     print(args)
     device = torch.device(args.device)
@@ -85,7 +85,8 @@ def main(args):
     # Test
     criterion = torch.nn.CrossEntropyLoss()
     #datasets = ['mscoco', 'traffic_sign', 'ilsvrc_2012', 'omniglot', 'aircraft', 'cu_birds', 'dtd', 'quickdraw', 'fungi', 'vgg_flower']
-    datasets = args.test_sources
+    #datasets = args.test_sources
+    datasets = ["mini_imagenet"]
     var_accs = {}
 
     for domain in datasets:
@@ -96,10 +97,11 @@ def main(args):
 
         # validate lr
         best_lr = args.ada_lr
+
         if args.deploy == 'finetune':
             print("Start selecting the best lr...")
             best_acc = 0
-            for lr in [0, 0.0001, 0.001, 0.01]:
+            for lr in [0,0.0001, 0.001, 0.01]:
                 model_without_ddp.lr = lr
                 test_stats = evaluate(data_loader_val, model, criterion, device, seed=1234, ep=5)
                 acc = test_stats['acc1']
